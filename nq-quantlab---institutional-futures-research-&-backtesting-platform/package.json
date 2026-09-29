@@ -4,9 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k -n STREAMLIT,VITE -c cyan,green \"streamlit run app.py --server.port=8501 --server.address=0.0.0.0 --server.headless=true --browser.gatherUsageStats=false\" \"vite --port=3000 --host=0.0.0.0\"",
-    "dev:vite": "vite --port=3000 --host=0.0.0.0",
-    "dev:streamlit": "streamlit run app.py --server.port=8501 --server.address=0.0.0.0 --server.headless=true --browser.gatherUsageStats=false",
+    "dev": "vite --port=3000 --host=0.0.0.0",
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
