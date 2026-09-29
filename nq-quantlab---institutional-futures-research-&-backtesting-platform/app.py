@@ -13,7 +13,10 @@ import datetime
 import random
 import io
 import math
-from typing import Tuple, Dict, Any, List
+import os
+import gzip
+import zipfile
+from typing import Tuple, Dict, Any, List, Optional
 
 # ==========================================
 # 1. INSTITUTIONAL NQ FUTURES SPECIFICATIONS
@@ -141,41 +144,108 @@ st.markdown("""
 # ==========================================
 # 3. IN-MEMORY DATASET & DYNAMIC RESAMPLER
 # ==========================================
-@st.cache_data(show_spinner=False)
-def load_base_nq_dataset(csv_path: str = "Dataset_NQ_5min_2022-2026.csv") -> pd.DataFrame:
-    """Loads base 5m NQ data or synthesizes in-memory if file is missing."""
-    try:
-        df = pd.read_csv(csv_path)
+# Candidate locations searched when no upload is provided.
+_CANDIDATE_PATHS = [
+    "Dataset_NQ_5min_2022-2026.csv",
+    "data/Dataset_NQ_5min_2022-2026.csv",
+    "data/Dataset_NQ_5min_2022-2026 copy.csv",
+    os.path.join(os.path.dirname(__file__), "Dataset_NQ_5min_2022-2026.csv"),
+    os.path.join(os.path.dirname(__file__), "data", "Dataset_NQ_5min_2022-2026.csv"),
+    os.path.join(os.path.dirname(__file__), "..", "data", "Dataset_NQ_5min_2022-2026.csv"),
+]
+
+
+def _parse_nq_dataframe(raw: pd.DataFrame) -> pd.DataFrame:
+    """Normalise an OHLCV dataframe regardless of source (disk, upload, zip, gzip)."""
+    df = raw.copy()
+    if 'datetime' in df.columns:
         df['datetime'] = pd.to_datetime(df['datetime'])
         df.set_index('datetime', inplace=True)
-        for col in ['open', 'high', 'low', 'close', 'volume']:
+    elif not isinstance(df.index, pd.DatetimeIndex):
+        df.index = pd.to_datetime(df.index)
+    for col in ['open', 'high', 'low', 'close', 'volume']:
+        if col in df.columns:
             df[col] = df[col].astype(float)
-        return df
+    df = df.sort_index()
+    return df[['open', 'high', 'low', 'close', 'volume']]
+
+
+def _read_any_source(file_obj, filename: str) -> Optional[pd.DataFrame]:
+    """Read a CSV from an in-memory BytesIO, transparently handling .gz and .zip."""
+    name_lower = filename.lower()
+    try:
+        if name_lower.endswith('.gz'):
+            with gzip.open(file_obj, 'rt', newline='') as fh:
+                return pd.read_csv(fh)
+        if name_lower.endswith('.zip'):
+            with zipfile.ZipFile(file_obj) as zf:
+                csv_names = [n for n in zf.namelist() if n.lower().endswith('.csv')]
+                if not csv_names:
+                    return None
+                with zf.open(csv_names[0]) as inner:
+                    return pd.read_csv(inner)
+        return pd.read_csv(file_obj)
     except Exception:
-        # Realistic in-memory fallback continuous dataset
-        dates = pd.date_range("2022-10-03 18:00:00", "2026-06-26 17:00:00", freq="5min")
-        # Filter trading hours (simple filter for fallback)
-        dates = dates[(dates.dayofweek < 5) | ((dates.dayofweek == 6) & (dates.hour >= 18))]
-        n = len(dates)
-        np.random.seed(42)
-        returns = np.random.normal(0.00008, 0.0018, n)
-        close = 11250.0 * np.exp(np.cumsum(returns))
-        close = np.round(close * 4.0) / 4.0
-        open_p = np.roll(close, 1)
-        open_p[0] = 11250.0
-        high = np.maximum(open_p, close) + np.abs(np.random.normal(3.5, 2.0, n))
-        low = np.minimum(open_p, close) - np.abs(np.random.normal(3.5, 2.0, n))
-        high = np.round(high * 4.0) / 4.0
-        low = np.round(low * 4.0) / 4.0
-        volume = np.random.randint(400, 3500, n)
-        df = pd.DataFrame({
-            'open': open_p,
-            'high': high,
-            'low': low,
-            'close': close,
-            'volume': volume
-        }, index=dates)
-        return df
+        return None
+
+
+def _find_disk_dataset() -> Optional[str]:
+    """Return the first candidate CSV path that exists on disk, else None."""
+    for p in _CANDIDATE_PATHS:
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def _generate_synthetic_dataset() -> pd.DataFrame:
+    """Realistic in-memory fallback continuous dataset used when no file is available."""
+    dates = pd.date_range("2022-10-03 18:00:00", "2026-06-26 17:00:00", freq="5min")
+    dates = dates[(dates.dayofweek < 5) | ((dates.dayofweek == 6) & (dates.hour >= 18))]
+    n = len(dates)
+    np.random.seed(42)
+    returns = np.random.normal(0.00008, 0.0018, n)
+    close = 11250.0 * np.exp(np.cumsum(returns))
+    close = np.round(close * 4.0) / 4.0
+    open_p = np.roll(close, 1)
+    open_p[0] = 11250.0
+    high = np.maximum(open_p, close) + np.abs(np.random.normal(3.5, 2.0, n))
+    low = np.minimum(open_p, close) - np.abs(np.random.normal(3.5, 2.0, n))
+    high = np.round(high * 4.0) / 4.0
+    low = np.round(low * 4.0) / 4.0
+    volume = np.random.randint(400, 3500, n)
+    df = pd.DataFrame({
+        'open': open_p,
+        'high': high,
+        'low': low,
+        'close': close,
+        'volume': volume
+    }, index=dates)
+    return df
+
+
+@st.cache_data(show_spinner=True)
+def load_base_nq_dataset(uploaded_file_bytes: Optional[bytes] = None, uploaded_filename: Optional[str] = None) -> Tuple[pd.DataFrame, str]:
+    """
+    Loads base 5m NQ data with graceful fallback chain:
+      1. User-uploaded file (raw CSV, .gz, or .zip) — handles >5MB datasets.
+      2. Disk CSV searched across multiple candidate paths.
+      3. Synthetic in-memory dataset so the app never crashes on startup.
+    Returns (dataframe, source_label).
+    """
+    if uploaded_file_bytes is not None and uploaded_filename:
+        parsed = _read_any_source(io.BytesIO(uploaded_file_bytes), uploaded_filename)
+        if parsed is not None and not parsed.empty:
+            return _parse_nq_dataframe(parsed), f"Uploaded: {uploaded_filename}"
+
+    disk_path = _find_disk_dataset()
+    if disk_path:
+        try:
+            df = pd.read_csv(disk_path)
+            return _parse_nq_dataframe(df), f"Disk: {os.path.basename(disk_path)}"
+        except Exception:
+            pass
+
+    return _generate_synthetic_dataset(), "Synthetic fallback (no file found)"
 
 @st.cache_data(show_spinner=False)
 def resample_nq_in_memory(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
@@ -443,9 +513,22 @@ with st.sidebar:
     
     nq_contracts = st.slider("Position Size (NQ Contracts)", min_value=1, max_value=5, value=1)
 
+    st.markdown("<hr/>", unsafe_allow_html=True)
+    st.markdown("<p style='font-size:0.75rem; font-weight:600; color:#94A3B8; margin-bottom:4px; text-transform:uppercase;'>Dataset Loader</p>", unsafe_allow_html=True)
+    uploaded_file = st.file_uploader(
+        "Upload NQ CSV (.csv, .csv.gz, or .zip)",
+        type=['csv', 'gz', 'zip'],
+        help="Optional: upload your full dataset (even if >5MB). Accepts raw CSV, gzip-compressed CSV, or a ZIP archive containing a CSV. If left blank, the app loads from disk or generates a synthetic fallback."
+    )
 
 # Load dataset and resample dynamically in-memory
-base_df = load_base_nq_dataset("Dataset_NQ_5min_2022-2026.csv")
+uploaded_bytes = None
+uploaded_name = None
+if uploaded_file is not None:
+    uploaded_bytes = uploaded_file.getvalue()
+    uploaded_name = uploaded_file.name
+
+base_df, data_source = load_base_nq_dataset(uploaded_bytes, uploaded_name)
 resampled_df = resample_nq_in_memory(base_df, selected_timeframe)
 
 latest_price = resampled_df['close'].iloc[-1]
@@ -465,6 +548,10 @@ with col_h1:
     </div>
     <div style='font-size:0.82rem; color:#94A3B8; margin-top:2px;'>
         Ephemeral In-Memory Engine · Active Timeframe: <span style='color:#38BDF8; font-weight:700; font-family:monospace;'>{selected_timeframe}</span> · Bars: <span style='font-family:monospace; color:#F1F5F9;'>{len(resampled_df):,}</span>
+    </div>
+    <div style='font-size:0.78rem; margin-top:4px;'>
+        <span style='color:#64748B;'>Data Source:</span>
+        <span style='color:{'#10B981' if 'Synthetic' not in data_source else '#FBBF24'}; font-weight:600; font-family:monospace;'>{data_source}</span>
     </div>
     """, unsafe_allow_html=True)
 with col_h2:
