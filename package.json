@@ -1,0 +1,17 @@
+{
+  "name": "nq-quantlab-root",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "npm --prefix \"nq-quantlab---institutional-futures-research-&-backtesting-platform\" run dev",
+    "dev:vite": "npm --prefix \"nq-quantlab---institutional-futures-research-&-backtesting-platform\" run dev:vite",
+    "dev:streamlit": "npm --prefix \"nq-quantlab---institutional-futures-research-&-backtesting-platform\" run dev:streamlit",
+    "build": "npm --prefix \"nq-quantlab---institutional-futures-research-&-backtesting-platform\" run build",
+    "preview": "npm --prefix \"nq-quantlab---institutional-futures-research-&-backtesting-platform\" run preview",
+    "lint": "npm --prefix \"nq-quantlab---institutional-futures-research-&-backtesting-platform\" run lint",
+    "clean": "npm --prefix \"nq-quantlab---institutional-futures-research-&-backtesting-platform\" run clean"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}
