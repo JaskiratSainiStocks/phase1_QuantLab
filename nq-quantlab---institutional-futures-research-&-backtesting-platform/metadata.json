@@ -1,0 +1,6 @@
+{
+  "name": "NQ QuantLab - Institutional Futures Research & Backtesting Platform",
+  "description": "Institutional-grade quantitative research, backtesting, and paper trading platform for Nasdaq-100 (NQ) futures with dynamic in-memory resampling, genetic optimizer, WFO, and Agenticks aesthetic.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
